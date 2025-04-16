@@ -13,6 +13,8 @@ import spack.util.prefix
 from spack.directives import build_system, depends_on, extends
 from spack.multimethod import when
 
+from ._checks import BuilderWithDefaults
+
 
 class LuaPackage(spack.package_base.PackageBase):
     """Specialized class for lua packages"""
@@ -48,7 +50,7 @@ class LuaPackage(spack.package_base.PackageBase):
 
 
 @spack.builder.builder("lua")
-class LuaBuilder(spack.builder.Builder):
+class LuaBuilder(BuilderWithDefaults[LuaPackage]):
     phases = ("unpack", "generate_luarocks_config", "preprocess", "install")
 
     #: Names associated with package methods in the old build-system format

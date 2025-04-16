@@ -5,7 +5,7 @@ import collections
 import collections.abc
 import copy
 import functools
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, Generic, List, Optional, Tuple, Type, TypeVar
 
 import spack.error
 import spack.multimethod
@@ -387,7 +387,10 @@ class InstallationPhase:
         return copy.deepcopy(self)
 
 
-class BaseBuilder(metaclass=BuilderMeta):
+B = TypeVar("B", bound=spack.package_base.PackageBase)
+
+
+class BaseBuilder(Generic[B], metaclass=BuilderMeta):
     """An interface for builders, without any phases defined. This class is exposed in the package
     API, so that packagers can create a single class to define ``setup_build_environment`` and
     ``@run_before`` and ``@run_after`` callbacks that can be shared among different builders.
@@ -396,7 +399,7 @@ class BaseBuilder(metaclass=BuilderMeta):
 
     .. code-block:: python
 
-       class AnyBuilder(BaseBuilder):
+       class AnyBuilder(BaseBuilder[AnyPackage]):
            @run_after("install")
            def fixup_install(self):
                 # do something after the package is installed
@@ -412,7 +415,7 @@ class BaseBuilder(metaclass=BuilderMeta):
             pass
     """
 
-    def __init__(self, pkg: spack.package_base.PackageBase) -> None:
+    def __init__(self, pkg: B) -> None:
         self.pkg = pkg
 
     @property
@@ -478,7 +481,7 @@ class BaseBuilder(metaclass=BuilderMeta):
         return f'"{self.__class__.__name__}" builder for "{self.spec.format(fmt)}"'
 
 
-class Builder(BaseBuilder, collections.abc.Sequence):
+class Builder(Generic[B], BaseBuilder[B], collections.abc.Sequence):
     """A builder is a class that, given a package object (i.e. associated with concrete spec),
     knows how to install it.
 
@@ -505,7 +508,7 @@ class Builder(BaseBuilder, collections.abc.Sequence):
     def archive_files(self) -> List[str]:
         return []
 
-    def __init__(self, pkg: spack.package_base.PackageBase) -> None:
+    def __init__(self, pkg: B) -> None:
         super().__init__(pkg)
         self.callbacks = {}
         for phase in self.phases:
