@@ -25,6 +25,8 @@ class Mdspan(CMakePackage):
         "cxxstd", default="17", values=["14", "17", "20"], multi=False, description="C++ standard"
     )
 
+    depends_on("cxx", type="build")
+
     depends_on("benchmark", when="+benchmarks")
     depends_on("googletest@1.14:1", when="+tests")
 
