@@ -1416,12 +1416,17 @@ class ConstraintOrigin(enum.Enum):
     result.
     """
 
+    CONDITIONAL_SPEC = 0
     DEPENDS_ON = 1
     REQUIRE = 2
 
     @staticmethod
     def _SUFFIXES() -> Dict["ConstraintOrigin", str]:
-        return {ConstraintOrigin.DEPENDS_ON: "_dep", ConstraintOrigin.REQUIRE: "_req"}
+        return {
+            ConstraintOrigin.CONDITIONAL_SPEC: "_cond",
+            ConstraintOrigin.DEPENDS_ON: "_dep",
+            ConstraintOrigin.REQUIRE: "_req",
+        }
 
     @staticmethod
     def append_type_suffix(pkg_id: str, kind: "ConstraintOrigin") -> str:
@@ -2598,6 +2603,10 @@ class SpackSolverSetup:
         if transitive:
             # TODO: Eventually distinguish 2 deps on the same pkg (build and link)
             for dspec in spec.edges_to_dependencies():
+                # Ignore conditional dependencies, they are handled by caller
+                if dspec.when != spack.spec.Spec():
+                    continue
+
                 dep = dspec.spec
 
                 if spec.concrete:
@@ -2659,22 +2668,13 @@ class SpackSolverSetup:
                 # if it's concrete, then the hashes above take care of dependency
                 # constraints, but expand the hashes if asked for.
                 if not spec.concrete or expand_hashes:
-                    if dspec.when != spack.spec.Spec():
-                        # Are the non-attr things issued here a problem?
-                        dependency_clauses, _ = self.condition_clauses(
-                            required_spec=dspec.when,
-                            imposed_spec=dep,
-                            required_name=dspec.when.name or spec.name,
-                            msg=f"{spec.name} depends conditionally on {dep.name}",
-                        )
-                    else:
-                        dependency_clauses = self._spec_clauses(
-                            dep,
-                            body=body,
-                            expand_hashes=expand_hashes,
-                            concrete_build_deps=concrete_build_deps,
-                            context=context,
-                        )
+                    dependency_clauses = self._spec_clauses(
+                        dep,
+                        body=body,
+                        expand_hashes=expand_hashes,
+                        concrete_build_deps=concrete_build_deps,
+                        context=context,
+                    )
                     if dspec.depflag == dt.BUILD:
                         clauses.append(fn.attr("depends_on", spec.name, dep.name, "build"))
                         if body is False:
@@ -3233,6 +3233,9 @@ class SpackSolverSetup:
         self.gen.h1("Spec Constraints")
         self.literal_specs(specs)
 
+        self.trigger_rules()
+        self.effect_rules()
+
         self.gen.h1("Variant Values defined in specs")
         self.define_variant_values()
 
@@ -3365,6 +3368,41 @@ class SpackSolverSetup:
             requirements = [x for x in requirements if x.args[0] != "depends_on"]
             cache[imposed_spec_key] = (effect_id, requirements)
             self.gen.fact(fn.pkg_fact(spec.name, fn.condition_effect(condition_id, effect_id)))
+
+            # Create subcondition with any conditional dependencies
+            # self.spec_clauses does not do anything with conditional
+            # dependencies
+            for dspec in spec.traverse_edges():
+                # Ignore unconditional deps
+                if dspec.when == spack.spec.Spec():
+                    continue
+
+                # Cannot use "virtual_node" attr as key for condition
+                # because reused specs do not track virtual nodes.
+                # Instead, track whether the parent uses the virtual
+                def virtual_handler(input_spec, requirements):
+                    ret = remove_facts("virtual_node")(input_spec, requirements)
+                    for edge in input_spec.traverse_edges(root=False, cover="edges"):
+                        if spack.repo.PATH.is_virtual(edge.spec.name):
+                            ret.append(fn.attr("uses_virtual", edge.parent.name, edge.spec.name))
+                    return ret
+
+                context = ConditionContext()
+                context.source = ConstraintOrigin.append_type_suffix(
+                    dspec.parent.name, ConstraintOrigin.CONDITIONAL_SPEC
+                )
+                # Default is to remove node-like attrs, override here
+                context.transform_required = virtual_handler
+                context.transform_imposed = lambda x, y: y
+
+                subcondition_id = self.condition(
+                    dspec.when,
+                    dspec.spec,
+                    required_name=dspec.parent.name,
+                    context=context,
+                    msg=f"Conditional dependency in literal ^[when={dspec.when}]{dspec.spec}",
+                )
+                self.gen.fact(fn.subcondition(subcondition_id, condition_id))
 
             if self.concretize_everything:
                 self.gen.fact(fn.solve_literal(trigger_id))
@@ -3818,6 +3856,7 @@ class SpecBuilder:
                 r"^package_hash$",
                 r"^root$",
                 r"^track_dependencies$",
+                r"^uses_virtual$",
                 r"^variant_default_value_from_cli$",
                 r"^virtual_node$",
                 r"^virtual_on_incoming_edges$",
