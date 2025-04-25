@@ -56,6 +56,7 @@ thing.  Spack uses ~variant in directory names and in the canonical form of
 specs to avoid ambiguity.  Both are provided because ~ can cause shell
 expansion when it is the first character in an id typed on the command line.
 """
+import itertools
 import json
 import pathlib
 import re
@@ -66,6 +67,7 @@ from typing import Iterator, List, Optional, Tuple, Union
 
 from llnl.util.tty import color
 
+import spack.config
 import spack.deptypes
 import spack.error
 import spack.paths
@@ -173,6 +175,15 @@ def tokenize(text: str) -> Iterator[Token]:
         yield token
 
 
+def parseable_tokens(text: str) -> List[Token]:
+    """Return non-whitespace tokens from the text passed as input
+
+    Raises:
+        SpecTokenizationError: when unexpected characters are found in the text
+    """
+    return filter(lambda x: x.kind != SpecTokens.WS, tokenize(text))
+
+
 class TokenContext:
     """Token context passed around by parsers"""
 
@@ -199,6 +210,10 @@ class TokenContext:
 
     def expect(self, *kinds: SpecTokens):
         return self.next_token and self.next_token.kind in kinds
+
+    def push(self, token_stream: Iterator[Token]):
+        self.token_stream = itertools.chain(token_stream, self.token_stream)
+        self.advance()
 
 
 class SpecTokenizationError(spack.error.SpecSyntaxError):
@@ -249,11 +264,13 @@ class SpecParser:
 
     def __init__(self, literal_str: str):
         self.literal_str = literal_str
-        self.ctx = TokenContext(filter(lambda x: x.kind != SpecTokens.WS, tokenize(literal_str)))
+        self.ctx = TokenContext(parseable_tokens(literal_str))
 
     def tokens(self) -> List[Token]:
         """Return the entire list of token from the initial text. White spaces are
         filtered out.
+
+        Note: This list will not show tokens pushed when parsing an alias
         """
         return list(filter(lambda x: x.kind != SpecTokens.WS, tokenize(self.literal_str)))
 
@@ -401,6 +418,14 @@ class SpecNodeParser:
                 else:
                     virtuals = tuple()
                     compiler_str = current_token.value[1:]
+
+                # String replacement for toolchains
+                # Push associated tokens back to the TokenContext
+                toolchains = spack.config.get("toolchains", {})
+                if compiler_str in toolchains:
+                    assert current_token.kind == SpecTokens.COMPILER
+                    self.ctx.push(parseable_tokens(toolchains[compiler_str]))
+                    continue
 
                 build_dependency = spack.spec.Spec(compiler_str)
                 if build_dependency.name in LEGACY_COMPILER_TO_BUILTIN:

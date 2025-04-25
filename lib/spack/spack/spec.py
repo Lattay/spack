@@ -782,7 +782,7 @@ class DependencySpec:
         child = self.spec.name if self.spec else None
         virtuals_string = f"virtuals={','.join(self.virtuals)}" if self.virtuals else ""
         when_string = f"when={self.when}" if self.when != Spec() else ""
-        edge_attrs = filter((virtuals_string, when_string), lambda x: bool(x))
+        edge_attrs = filter(lambda x: bool(x), (virtuals_string, when_string))
         return f"{parent} {self.depflag}[{' '.join(edge_attrs)}] --> {child}"
 
     def flip(self) -> "DependencySpec":
@@ -3512,7 +3512,7 @@ class Spec:
                     return False
 
         # Edges have been checked above already, hence deps=False
-        lhs_nodes = self.traverse(root=False)
+        lhs_nodes = list(self.traverse(root=False))
         for rhs in other.traverse(root=False):
             # Possible lhs nodes to match this rhs node
             lhss = [lhs for lhs in lhs_nodes if lhs.satisfies(rhs, deps=False)]
